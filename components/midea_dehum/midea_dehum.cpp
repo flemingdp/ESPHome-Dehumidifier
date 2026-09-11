@@ -134,7 +134,7 @@ void MideaDehumComponent::processPacket(uint8_t* data, size_t len) {
       this->mcu_protocol_version_ = data[7];
       this->device_info_known_    = true;
     }
-    this->parseState(data);
+    this->parseState(data, len);
 #ifdef USE_MIDEA_DEHUM_HANDSHAKE
     if (!this->handshake_done_) {
       this->handshake_done_ = true;

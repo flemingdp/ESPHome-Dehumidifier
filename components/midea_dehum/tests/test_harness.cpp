@@ -238,6 +238,7 @@ int main(int argc, char** argv) {
 #ifdef USE_MIDEA_DEHUM_TIMER
     total += run_test("8.4  V2 status timer 2h", test_v2_state_timer);
 #endif
+    total += run_test("8.5  MAD50P1AWS short V1 status", test_mad50p1aws_state_parsing);
 
 #ifdef MIDEA_PROTOCOL_AUTO
     if (strcmp(mode, "all") == 0) {

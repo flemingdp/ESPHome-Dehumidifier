@@ -44,7 +44,14 @@ static void v1_start_handshake(MideaDehumComponent* self) {
 }
 
 static bool v1_is_status_response(uint8_t* data, size_t len) {
-  return (len > 10 && data[10] == 0xC8);
+  // Standard V1 status replies use the 0xC8 discriminator at byte 10.
+  // MAD50P1AWS units manufactured in 2024 instead use a 35-byte status frame
+  // identified by AA 22 A1 and do not reliably use that discriminator.
+  const bool standard_v1 = len > 10 && data[10] == 0xC8;
+  const bool mad50p1aws =
+      len == 0x23 && data[0] == 0xAA && data[1] == 0x22 && data[2] == 0xA1;
+
+  return standard_v1 || mad50p1aws;
 }
 
 static bool v1_on_message(MideaDehumComponent* self, uint8_t* data, size_t len) {

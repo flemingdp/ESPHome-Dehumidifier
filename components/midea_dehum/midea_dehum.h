@@ -328,7 +328,7 @@ public:
   void sendClimateState();
 
   // ── 6. Status decoding (implemented in midea_dehum_state.cpp) ───────────
-  void parseState(const uint8_t* buf);
+  void parseState(const uint8_t* buf, size_t len);
 
   // ── 7. Protocol wiring ──────────────────────────────────────────────────
   void set_protocol_version(uint8_t version);
