@@ -368,7 +368,7 @@ public:
 
   // ── Protocol vtable + auto‑detect state (public, accessed by protocol_auto.cpp free fns) ──
   const ProtocolVTable* protocol_{nullptr};
-  uint8_t user_protocol_version_{0};  // 0=auto, 1=V1, 2=V2
+  uint8_t user_protocol_version_{0};  // 0=auto, 1=V1, 2=V2, 3=MAD50P1AWS
   MideaAutoDetect ad_state_;
 
 protected:
