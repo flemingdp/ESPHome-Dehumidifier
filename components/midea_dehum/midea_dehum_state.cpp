@@ -4,6 +4,7 @@
 // zero dependency on the UART transport layer.
 
 #include <cmath>
+#include <cstdio>
 
 #include "esphome/core/log.h"
 #include "midea_dehum.h"
@@ -13,7 +14,24 @@ namespace midea_dehum {
 
 static const char* const TAG = "midea_dehum";
 
-void MideaDehumComponent::parseState(const uint8_t* buf) {
+void MideaDehumComponent::parseState(const uint8_t* buf, size_t len) {
+  // V3 uses the same state layout for unsolicited 05/A0 notifications and
+  // the 02/C8 command / 03/C8 poll responses.
+  const bool is_v3_status = this->protocol_ != nullptr &&
+                            this->protocol_->version == 3 && len == 35 &&
+                            ((buf[9] == 0x05 && buf[10] == 0xA0) ||
+                             ((buf[9] == 0x02 || buf[9] == 0x03) &&
+                              buf[10] == 0xC8));
+  if (is_v3_status) {
+    char hex[(35 * 3) + 1];
+    size_t pos = 0;
+    for (size_t i = 0; i < 35; i++)
+      pos += snprintf(hex + pos, sizeof(hex) - pos, "%02X%s", buf[i],
+                      i + 1 == 35 ? "" : " ");
+    ESP_LOGD(TAG,
+             "V3 RAW: mode=%02X fan=%02X target=%02X current=%02X flags=%02X bytes=%s",
+             buf[12], buf[13], buf[17], buf[26], buf[19], hex);
+  }
   bool updated = false;
 
   // --- Parse core operating parameters ---
@@ -164,6 +182,15 @@ void MideaDehumComponent::parseState(const uint8_t* buf) {
 #endif
 
   // --- BYTE19 Related features ---
+  this->feature_flags_ = buf[19];
+
+  if (this->protocol_ != nullptr && this->protocol_->version == 3) {
+    ESP_LOGD(TAG,
+             "V3 state: power=%u mode=%02X fan=%02X target=%u current=%u flags=%02X",
+             this->state_.powerOn ? 1 : 0, this->state_.mode,
+             this->state_.fanSpeed, this->state_.humiditySetpoint,
+             this->state_.currentHumidity, this->feature_flags_);
+  }
 
   // --- Panel light / brightness class (bits 7–6) ---
 #ifdef USE_MIDEA_DEHUM_LIGHT
@@ -278,6 +305,12 @@ void MideaDehumComponent::parseState(const uint8_t* buf) {
     }
   }
 #endif
+
+  if (is_v3_status) {
+    ESP_LOGD(TAG, "V3 PARSED: mode=%02X fan=%02X target=%02X current=%02X",
+             this->state_.mode, this->state_.fanSpeed,
+             this->state_.humiditySetpoint, this->state_.currentHumidity);
+  }
 
   this->clearRxBuf();
   this->first_run_ = false;

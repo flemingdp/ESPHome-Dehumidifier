@@ -25,7 +25,8 @@ CONFIG_SCHEMA = (
         #      protocol; gives up after 2 minutes if nothing responds
         #  1 = Chreece original
         #  2 = MAD50PS1QWT-A verified protocol
-        cv.Optional(CONF_PROTOCOL_VERSION, default=0): cv.int_range(0, 2),
+        #  3 = MAD50P1AWS (2024) factory-adapter handshake
+        cv.Optional(CONF_PROTOCOL_VERSION, default=0): cv.int_range(0, 3),
 
         cv.Optional("display_mode_setpoint", default="Setpoint"): cv.string,
         cv.Optional("display_mode_continuous", default="Continuous"): cv.string,
@@ -51,12 +52,17 @@ async def to_code(config):
 
     # Compile-time guards: only include the protocol files needed
     if version == 0:
-        # Auto-detect needs both protocols available
+        # Auto-detect needs all three protocols available
         cg.add_build_flag("-DMIDEA_PROTOCOL_V1")
         cg.add_build_flag("-DMIDEA_PROTOCOL_V2")
+        cg.add_build_flag("-DMIDEA_PROTOCOL_V3")
         cg.add_build_flag("-DMIDEA_PROTOCOL_AUTO")
     elif version == 2:
         cg.add_build_flag("-DMIDEA_PROTOCOL_V2")
+    elif version == 3:
+        # V3 delegates common handshake messages to the V1 vtable.
+        cg.add_build_flag("-DMIDEA_PROTOCOL_V1")
+        cg.add_build_flag("-DMIDEA_PROTOCOL_V3")
     else:
         cg.add_build_flag("-DMIDEA_PROTOCOL_V1")
 

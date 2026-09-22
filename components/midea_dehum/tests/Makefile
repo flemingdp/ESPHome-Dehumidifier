@@ -9,8 +9,8 @@ CXXFLAGS := -std=c++17 -Wall -Wextra -g -O0
 #    -I..         → component source files (midea_dehum.h, etc.)
 INCLUDES := -I. -I..
 
-# Compile flags — enable V1 + V2 + all optional features we want to test
-DEFINES  := -DMIDEA_PROTOCOL_V1 -DMIDEA_PROTOCOL_V2 \
+# Compile flags — enable V1 + V2 + V3 + all optional features we want to test
+DEFINES  := -DMIDEA_PROTOCOL_V1 -DMIDEA_PROTOCOL_V2 -DMIDEA_PROTOCOL_V3 \
             -DMIDEA_PROTOCOL_AUTO               \
             -DUSE_MIDEA_DEHUM_HANDSHAKE           \
             -DUSE_MIDEA_DEHUM_ERROR               \
@@ -34,49 +34,31 @@ COMPONENT_SRC := ../midea_dehum.cpp          \
                  ../midea_dehum_state.cpp     \
                  ../midea_dehum_protocol_v1.cpp \
                  ../midea_dehum_protocol_v2.cpp \
+                 ../midea_dehum_protocol_v3.cpp \
                  ../midea_dehum_protocol_auto.cpp
 
-OBJS := test_harness.o \
-        midea_dehum.o \
-        midea_dehum_uart.o \
-        midea_dehum_features.o \
-        midea_dehum_state.o \
-        midea_dehum_protocol_v1.o \
-        midea_dehum_protocol_v2.o \
-        midea_dehum_protocol_auto.o
+COMPONENT_OBJS := $(notdir $(COMPONENT_SRC:.cpp=.o))
+OBJS := test_harness.o $(COMPONENT_OBJS)
+DEPFLAGS := -MMD -MP
 
-.PHONY: all clean run-v1 run-v2 run-all test test-asan standalone
+.PHONY: all clean run-v1 run-v2 run-v3 run-all test test-all test-asan standalone
 
 all: test_harness
 
 # ── Combined harness ────────────────────────────────────────────────────
 
 test_harness: $(OBJS)
-	$(CXX) $(CXXFLAGS) -o $@ $^
+	$(CXX) $(CXXFLAGS) $(LDFLAGS) -o $@ $^ $(LDLIBS)
 
-test_harness.o: test_harness.cpp mock_esphome.h
-	$(CXX) $(CXXFLAGS) $(INCLUDES) $(DEFINES) -c -o $@ test_harness.cpp
+# Generated dependencies include fixtures, included test suites, and headers.
+# Rebuild existing objects once when these build rules change.
+$(OBJS): Makefile
 
-midea_dehum.o: ../midea_dehum.cpp ../midea_dehum.h mock_esphome.h
-	$(CXX) $(CXXFLAGS) $(INCLUDES) $(DEFINES) -c -o $@ ../midea_dehum.cpp
+test_harness.o: test_harness.cpp
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(INCLUDES) $(DEFINES) $(DEPFLAGS) -c -o $@ $<
 
-midea_dehum_uart.o: ../midea_dehum_uart.cpp ../midea_dehum.h mock_esphome.h
-	$(CXX) $(CXXFLAGS) $(INCLUDES) $(DEFINES) -c -o $@ ../midea_dehum_uart.cpp
-
-midea_dehum_features.o: ../midea_dehum_features.cpp ../midea_dehum.h mock_esphome.h
-	$(CXX) $(CXXFLAGS) $(INCLUDES) $(DEFINES) -c -o $@ ../midea_dehum_features.cpp
-
-midea_dehum_state.o: ../midea_dehum_state.cpp ../midea_dehum.h mock_esphome.h
-	$(CXX) $(CXXFLAGS) $(INCLUDES) $(DEFINES) -c -o $@ ../midea_dehum_state.cpp
-
-midea_dehum_protocol_v1.o: ../midea_dehum_protocol_v1.cpp ../midea_dehum.h mock_esphome.h
-	$(CXX) $(CXXFLAGS) $(INCLUDES) $(DEFINES) -c -o $@ ../midea_dehum_protocol_v1.cpp
-
-midea_dehum_protocol_v2.o: ../midea_dehum_protocol_v2.cpp ../midea_dehum.h mock_esphome.h
-	$(CXX) $(CXXFLAGS) $(INCLUDES) $(DEFINES) -c -o $@ ../midea_dehum_protocol_v2.cpp
-
-midea_dehum_protocol_auto.o: ../midea_dehum_protocol_auto.cpp ../midea_dehum.h mock_esphome.h
-	$(CXX) $(CXXFLAGS) $(INCLUDES) $(DEFINES) -c -o $@ ../midea_dehum_protocol_auto.cpp
+$(COMPONENT_OBJS): %.o: ../%.cpp
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(INCLUDES) $(DEFINES) $(DEPFLAGS) -c -o $@ $<
 
 run-v1: test_harness
 	./test_harness v1
@@ -84,13 +66,15 @@ run-v1: test_harness
 run-v2: test_harness
 	./test_harness v2
 
+run-v3: test_harness
+	./test_harness v3
+
 run-all: test_harness
 	./test_harness all
 
 # ── CI targets ──────────────────────────────────────────────────────────
 
-test: test_harness
-	./test_harness all
+test test-all: run-all
 
 # ASAN: rebuild with address sanitizer and run
 test-asan: clean
@@ -99,14 +83,14 @@ test-asan: clean
 
 # ── Standalone single-suite executables ─────────────────────────────────
 
-STANDALONE_OBJS := midea_dehum.o midea_dehum_uart.o midea_dehum_features.o \
-                  midea_dehum_state.o midea_dehum_protocol_v1.o \
-                  midea_dehum_protocol_v2.o midea_dehum_protocol_auto.o
+STANDALONE_OBJS := $(COMPONENT_OBJS)
 
 standalone: test_handshake_solo test_commands_solo test_e2e_solo test_system_solo
 
 test_%_solo: test_%.cpp fixtures.h mock_esphome.h $(STANDALONE_OBJS)
-	$(CXX) $(CXXFLAGS) $(INCLUDES) $(DEFINES) -o $@ $< $(STANDALONE_OBJS)
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(INCLUDES) $(DEFINES) $(DEPFLAGS) $(LDFLAGS) -o $@ $< $(STANDALONE_OBJS) $(LDLIBS)
 
 clean:
-	rm -f test_harness *.o *_solo
+	rm -f test_harness *.o *.d *_solo
+
+-include $(OBJS:.o=.d) $(wildcard *_solo.d)

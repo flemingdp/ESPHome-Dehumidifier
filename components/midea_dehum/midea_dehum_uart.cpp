@@ -92,6 +92,61 @@ void MideaDehumComponent::sendMessage(uint8_t msgType, uint8_t agreementVersion,
   this->write_array(serialTxBuf, total_len);
 }
 
+#ifdef MIDEA_PROTOCOL_V3
+uint8_t MideaDehumComponent::sendV3SequencedMessage(
+    uint8_t msg_type, const uint8_t* payload, uint8_t payload_length,
+    bool command) {
+  // Reserve one payload byte for the transaction sequence. sendMessage()
+  // then calculates CRC8 and checksum over the completed payload.
+  uint8_t sequenced_payload[246];
+  if (payload_length >= sizeof(sequenced_payload)) {
+    ESP_LOGE("midea_dehum", "V3 payload too large: %u", payload_length);
+    return 0;
+  }
+  memcpy(sequenced_payload, payload, payload_length);
+  const uint8_t sequence = ++this->v3_transaction_sequence_;
+  sequenced_payload[payload_length] = sequence;
+
+  // Captured MAD50P1AWS control and polling transactions both use agreement
+  // byte 0x00, independently of the 0x08 startup announcement.
+  this->sendMessage(msg_type, 0x00, 0x00, payload_length + 1,
+                    sequenced_payload);
+
+  if (command) {
+    this->v3_pending_command_sequence_ = sequence;
+    this->v3_command_pending_ = true;
+
+#if ESPHOME_LOG_LEVEL >= ESPHOME_LOG_LEVEL_DEBUG
+    const size_t total_len = 10 + payload_length + 1 + 2;
+    std::string hex_str;
+    hex_str.reserve(total_len * 3);
+    for (size_t i = 0; i < total_len; i++) {
+      char buf[4];
+      snprintf(buf, sizeof(buf), "%02X ", serialTxBuf[i]);
+      hex_str += buf;
+    }
+    ESP_LOGD("midea_dehum", "V3 TX command: sequence=%02X bytes=%s",
+             sequence, hex_str.c_str());
+#endif
+  } else {
+    ESP_LOGD("midea_dehum", "V3 TX poll: sequence=%02X", sequence);
+  }
+
+  return sequence;
+}
+
+bool MideaDehumComponent::matchV3CommandResponse(uint8_t sequence) {
+  const bool matched = this->v3_command_pending_ &&
+                       sequence == this->v3_pending_command_sequence_;
+  ESP_LOGD("midea_dehum",
+           "V3 RX command response: sequence=%02X pending=%s pending_sequence=%02X matched=%s",
+           sequence, this->v3_command_pending_ ? "yes" : "no",
+           this->v3_pending_command_sequence_, matched ? "yes" : "no");
+  if (matched) this->v3_command_pending_ = false;
+  return matched;
+}
+#endif
+
 // ── TX helpers — called by sendMessage() ─────────────────────────────────
 
 void MideaDehumComponent::clearTxBuf() {

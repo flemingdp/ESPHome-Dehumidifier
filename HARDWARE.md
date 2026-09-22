@@ -21,6 +21,10 @@ All known Midea dehumidifiers use a standard USB-A port for the WiFi dongle. The
 
 ## Choosing a Build Path
 
+For the May 2024 **MAD50P1AWS / SK105 with V3**, use the
+[S8050 wiring below](#v3-hardware-wiring---mad50p1aws--sk105).
+The following direct and BSS138 examples describe other builds.
+
 The MAD50PS1QWT-A MCU uses 5V logic (verified). Other models may differ — if you're unsure, measure the voltage on pin 2 (D-) with a multimeter before connecting. Whether you need a level shifter depends on your ESP board and how much risk you're comfortable with:
 
 | Approach | Level shifter? | Best for |
@@ -106,6 +110,103 @@ uart:
 ```
 
 > **Note:** ESP32C6 uses different GPIO mappings than other ESP32 variants. On the XIAO ESP32C6, D6=GPIO16 and D7=GPIO17. Check your board's pinout if using a different ESP32.
+
+---
+
+## V3 Hardware Wiring - MAD50P1AWS / SK105
+
+Tested with a May 2024 MAD50P1AWS / Cube 50 Pint **with pump**, factory SK105
+adapter, ESP32 DevKit v1, and ESPHome 2026.9.x.
+
+Direct ESP32 TX did not work on this unit. An S8050 open-collector TX circuit
+allowed reliable communication. This result applies to this tested unit;
+other models can use different interfaces.
+
+### Wiring
+
+Parts: ESP32 DevKit v1, S8050 NPN transistor, one 1k resistor, and wires.
+
+```text
+ESP32 DevKit v1                           Midea MAD50P1AWS
+
+GPIO17 (UART TX) ----[ 1k ]---- B
+                              |  S8050 NPN
+                              C ---------------- D+ (MCU RX)
+                              E
+                              |
+GND --------------------------+----------------- GND
+
+GPIO16 (UART RX) -------------------------------- D- (MCU TX)
+```
+
+`B`, `C`, and `E` mean base, collector, and emitter. The diagram shows
+connections, not the transistor's physical pin order.
+
+The tested **S8050 D331** used pin 1 = emitter, pin 2 = base, pin 3 = collector.
+**Check your transistor's datasheet: pin order varies by manufacturer and package.**
+
+The tested RX path connects D- directly to GPIO16. It has no divider or level
+shifter. A 10k/20k divider was tried but is not part of this working circuit.
+This records the tested connection; it does not establish electrical
+compatibility with other boards.
+
+### Configuration
+
+Use **GPIO17 for TX** and **GPIO16 for RX**. Follow the GPIO numbers even if
+your board labels them `RX2` and `TX2`. These assignments differ from the
+generic examples above.
+
+```yaml
+uart:
+  id: uart_midea
+  tx_pin:
+    number: GPIO17
+    inverted: true
+  rx_pin:
+    number: GPIO16
+    inverted: false
+    mode:
+      input: true
+      pullup: false
+  baud_rate: 9600
+  data_bits: 8
+  parity: NONE
+  stop_bits: 1
+  rx_buffer_size: 512
+
+midea_dehum:
+  id: midea_dehum_comp
+  uart_id: uart_midea
+  protocol_version: 3
+  handshake_enabled: true
+  status_poll_interval: 1000
+```
+
+The S8050 pulls D+ LOW when GPIO17 is HIGH. When GPIO17 is LOW, the transistor
+releases D+ and the appliance pull-up makes it HIGH. Set TX `inverted: true`
+to correct this inversion. Keep RX `inverted: false`.
+
+### Measurements and troubleshooting
+
+Measured idle voltage was about 5.0 V without the factory adapter and 4.9 V
+with it connected. Direct ESP32 TX looked valid on another UART receiver,
+but the appliance did not respond. The S8050 circuit resolved that failure.
+This suggests the input needs a LOW drive and a released HIGH state; the
+appliance input circuit is not confirmed.
+
+If the appliance does not respond:
+
+1. Check GPIO17 TX, TX inversion, and the 1k base resistor.
+2. Check the transistor pin order, collector to D+, and emitter to common GND.
+3. Check D- to GPIO16 RX and the shared ground.
+4. Do not assume bytes seen on another receiver prove the appliance can read them.
+
+For this unit, check the circuit before following generic advice to swap data
+wires. Use the configuration above; the [general example](dehumidifier.yaml)
+uses different GPIO assignments and disables the handshake.
+
+See the [V3 protocol reference](components/midea_dehum/protocol_v3.md) for frames
+and startup timing.
 
 ---
 

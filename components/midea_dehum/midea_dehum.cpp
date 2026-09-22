@@ -16,6 +16,10 @@ static const char* const TAG = "midea_dehum";
 // ── parseState() moved to midea_dehum_state.cpp (takes const uint8_t* buf)
 
 void MideaDehumComponent::setup() {
+#ifdef MIDEA_PROTOCOL_V3
+  if (this->protocol_ == &PROTOCOL_V3)
+    ESP_LOGI(TAG, "V3 setup at +%u ms", (unsigned) millis());
+#endif
 #if ESPHOME_VERSION_CODE >= VERSION_CODE(2026, 4, 0)
   std::vector<const char*> custom_presets;
   if (!this->display_mode_setpoint_.empty() && this->display_mode_setpoint_ != "UNUSED")
@@ -41,11 +45,21 @@ void MideaDehumComponent::setup() {
     this->handshake_done_ = false;
 
     if (!ad_try_start(this)) {
-      uint32_t delay_ms = this->protocol_ ? this->protocol_->startup_delay_ms : 2000;
-      ESP_LOGI(TAG, "Protocol v%d, startup delay %ums",
-               this->protocol_ ? (int) this->protocol_->version : 0, (unsigned int) delay_ms);
-      App.scheduler.set_timeout(this, "start_handshake", delay_ms,
-                                [this]() { this->performHandshakeStep(); });
+#ifdef MIDEA_PROTOCOL_V3
+      if (this->protocol_ == &PROTOCOL_V3) {
+        // ESPHome initializes the UART bus at BUS priority before this
+        // component's DATA-priority setup, so fixed V3 can announce now.
+        ESP_LOGI(TAG, "UART ready for V3 at +%u ms", (unsigned) millis());
+        this->performHandshakeStep();
+      } else
+#endif
+      {
+        uint32_t delay_ms = this->protocol_ ? this->protocol_->startup_delay_ms : 2000;
+        ESP_LOGI(TAG, "Protocol v%d, startup delay %ums",
+                 this->protocol_ ? (int) this->protocol_->version : 0, (unsigned int) delay_ms);
+        App.scheduler.set_timeout(this, "start_handshake", delay_ms,
+                                  [this]() { this->performHandshakeStep(); });
+      }
     }
   } else {
     this->handshake_step_ = 2;
@@ -109,7 +123,9 @@ void MideaDehumComponent::processPacket(uint8_t* data, size_t len) {
       snprintf(buf, sizeof(buf), "%02X ", data[i]);
       hex_str += buf;
     }
-    ESP_LOGD(TAG, "RX (%zu bytes): %s", len, hex_str.c_str());
+    ESP_LOGD(TAG, "RX packet: len=%zu agreement=%02X msg=%02X subtype=%02X bytes=%s",
+             len, len > 8 ? data[8] : 0, len > 9 ? data[9] : 0,
+             len > 10 ? data[10] : 0, hex_str.c_str());
   }
 #endif
 
@@ -117,6 +133,7 @@ void MideaDehumComponent::processPacket(uint8_t* data, size_t len) {
   // (0x08 = V2, 0x00 = V1). Lock onto that protocol on the first ACK, before the
   // normal vtable dispatch, so detection can't be fooled by which init we sent.
   if (this->is_auto_detect() && len > 9 && data[9] == 0x07) {
+    ESP_LOGD(TAG, "Dispatch: auto_detect_ack=yes version=%02X", data[8]);
     ad_on_ack(this, data[8]);
     this->clearRxBuf();
     return;
@@ -124,6 +141,24 @@ void MideaDehumComponent::processPacket(uint8_t* data, size_t len) {
 
   // Status response — discriminated by protocol vtable
   bool is_status_response = (this->protocol_ && this->protocol_->is_status_response(data, len));
+  ESP_LOGD(TAG, "Dispatch: protocol=v%u status=%s handshake_step=%u handshake_done=%s",
+           this->protocol_ ? this->protocol_->version : 0,
+           is_status_response ? "yes" : "no", this->get_handshake_step(),
+           this->get_handshake_done() ? "yes" : "no");
+
+  bool handled_by_protocol = false;
+#ifdef USE_MIDEA_DEHUM_HANDSHAKE
+  if (!is_status_response && this->protocol_) {
+    const uint8_t step_before = this->get_handshake_step();
+    const bool done_before = this->get_handshake_done();
+    handled_by_protocol = this->protocol_->on_message(this, data, len);
+    ESP_LOGD(TAG,
+             "Dispatch: on_message=%s handshake_step=%u->%u handshake_done=%s->%s",
+             handled_by_protocol ? "yes" : "no", step_before,
+             this->get_handshake_step(), done_before ? "yes" : "no",
+             this->get_handshake_done() ? "yes" : "no");
+  }
+#endif
 
   // Auto-detect: a status response confirms the protocol is correct
   ad_on_packet(this, is_status_response);
@@ -134,16 +169,25 @@ void MideaDehumComponent::processPacket(uint8_t* data, size_t len) {
       this->mcu_protocol_version_ = data[7];
       this->device_info_known_    = true;
     }
-    this->parseState(data);
+    ESP_LOGD(TAG, "Dispatch: parseState=yes");
+    this->parseState(data, len);
+#ifdef MIDEA_PROTOCOL_V3
+    // The MAD50P1AWS factory adapter echoes its 0x05/0xA0 seed/status frames.
+    if (this->protocol_ == &PROTOCOL_V3 && len == 0x23 && data[9] == 0x05 && data[10] == 0xA0) {
+      this->write_array(data, len);
+    }
+#endif
 #ifdef USE_MIDEA_DEHUM_HANDSHAKE
     if (!this->handshake_done_) {
+      ESP_LOGD(TAG, "Handshake: status received, marking complete (step=%u)",
+               this->handshake_step_);
       this->handshake_done_ = true;
     }
 #endif
   }
 #ifdef USE_MIDEA_DEHUM_HANDSHAKE
   // Non-status MCU messages -- dispatched through protocol vtable
-  else if (this->protocol_ && this->protocol_->on_message(this, data, len)) {
+  else if (handled_by_protocol) {
     // handled by protocol
   }
 #endif
@@ -183,7 +227,13 @@ void MideaDehumComponent::processPacket(uint8_t* data, size_t len) {
 void MideaDehumComponent::performHandshakeStep() {
   // Delegate to protocol vtable
   if (this->protocol_) {
+    const uint8_t step_before = this->handshake_step_;
+    ESP_LOGD(TAG, "Handshake: start v%u step=%u", this->protocol_->version,
+             step_before);
     this->protocol_->start_handshake(this);
+    ESP_LOGD(TAG, "Handshake: finish v%u step=%u->%u done=%s",
+             this->protocol_->version, step_before, this->handshake_step_,
+             this->handshake_done_ ? "yes" : "no");
   }
 }
 #endif  // USE_MIDEA_DEHUM_HANDSHAKE
@@ -223,17 +273,20 @@ void MideaDehumComponent::control(const climate::ClimateCall& call) {
   if (call.get_fan_mode().has_value()) {
     switch (*call.get_fan_mode()) {
       case climate::CLIMATE_FAN_LOW:
-        reqFan = 40;
+        reqFan = this->is_v3_active() ? 0x28 : 40;
         break;
       case climate::CLIMATE_FAN_MEDIUM:
-        // V2 has no MEDIUM — map to HIGH (80). V1 uses 60.
-        reqFan = this->is_v2_active() ? 80 : 60;
+        // V2 has no MEDIUM and maps it to HIGH. V3 does not expose or accept
+        // MEDIUM; preserve the last decoded fan value if a stale call arrives.
+        if (!this->is_v3_active())
+          reqFan = this->is_v2_active() ? 80 : 60;
         break;
       case climate::CLIMATE_FAN_HIGH:
-        reqFan = 80;
+        reqFan = this->is_v3_active() ? 0x50 : 80;
         break;
       default:
-        reqFan = this->is_v2_active() ? 80 : 60;
+        if (!this->is_v3_active())
+          reqFan = this->is_v2_active() ? 80 : 60;
         break;
     }
   }
@@ -482,12 +535,12 @@ climate::ClimateTraits MideaDehumComponent::traits() {
   t.add_supported_mode(climate::CLIMATE_MODE_OFF);
   t.add_supported_mode(climate::CLIMATE_MODE_DRY);
 
-  // Fan modes: V2 only supports Low/High. V1 supports Low/Medium/High.
+  // Fan modes: V2 and V3 only support Low/High. V1 supports Low/Medium/High.
   // For auto-detect (version 0), advertise all three so HA offers the choice
   // before the protocol locks in; V2's encoder maps MEDIUM→High anyway.
   t.add_supported_fan_mode(climate::CLIMATE_FAN_LOW);
   t.add_supported_fan_mode(climate::CLIMATE_FAN_HIGH);
-  if (this->user_protocol_version_ != 2) {
+  if (this->user_protocol_version_ != 2 && this->user_protocol_version_ != 3) {
     t.add_supported_fan_mode(climate::CLIMATE_FAN_MEDIUM);
   }
 
@@ -544,6 +597,12 @@ void MideaDehumComponent::set_protocol_version(uint8_t version) {
 #ifdef MIDEA_PROTOCOL_V2
   if (version == 2) {
     this->protocol_ = &PROTOCOL_V2;
+    return;
+  }
+#endif
+#ifdef MIDEA_PROTOCOL_V3
+  if (version == 3) {
+    this->protocol_ = &PROTOCOL_V3;
     return;
   }
 #endif

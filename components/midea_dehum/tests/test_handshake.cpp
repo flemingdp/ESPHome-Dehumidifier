@@ -259,6 +259,83 @@ static void test_v1_3_full_cycle() {
   ASSERT_EQ(dev.raw_humidity(), 55, "V1.3 push: humidity now 55%%");
 }
 
+static void test_mad50p1aws_handshake() {
+  TestMideaDehum dev;
+  dev.set_protocol_version(3);
+  dev.setup();
+
+  static const uint8_t expected_announce[] = {
+      0xAA, 0x0B, 0xFF, 0xF4, 0x00, 0x00, 0x01, 0x00, 0x08, 0x07, 0x00, 0xF2};
+  ASSERT_EQ(dev.uart_.tx_count(), static_cast<size_t>(1),
+            "MAD50P1AWS: factory announce sent during setup");
+  const auto& announce = dev.uart_.tx_at(0).data;
+  ASSERT(announce.size() == sizeof(expected_announce) &&
+             memcmp(announce.data(), expected_announce, sizeof(expected_announce)) == 0,
+         "MAD50P1AWS: announce matches capture");
+
+  size_t before_ack = dev.uart_.tx_count();
+  dev.inject(MAD50P1AWS_DEVICE_ACK, sizeof(MAD50P1AWS_DEVICE_ACK));
+  dev.inject(MAD50P1AWS_DEVICE_ACK, sizeof(MAD50P1AWS_DEVICE_ACK));
+  run_scheduler();
+  ASSERT_EQ(dev.uart_.tx_count() - before_ack, static_cast<size_t>(9),
+            "MAD50P1AWS: six acquiring and three network frames sent");
+
+  size_t before_status = dev.uart_.tx_count();
+  dev.inject(MAD50P1AWS_STATUS_HUM35, sizeof(MAD50P1AWS_STATUS_HUM35));
+  ASSERT_EQ(dev.uart_.tx_count() - before_status, static_cast<size_t>(1),
+            "MAD50P1AWS: seed status echoed");
+  ASSERT(dev.is_handshake_done(), "MAD50P1AWS: handshake completes on status");
+  ASSERT_EQ(dev.raw_humidity(), 58, "MAD50P1AWS: status decoded after handshake");
+}
+
+static void test_mad50p1aws_no_ack_startup() {
+  TestMideaDehum dev;
+  dev.set_protocol_version(3);
+  dev.setup();
+
+  ASSERT_EQ(dev.uart_.tx_count(), static_cast<size_t>(1),
+            "MAD50P1AWS no ACK: only short-07 sent during setup");
+  // Check scheduled deadlines relative to the first A0 (mock millis ticks on reads).
+  const uint32_t offsets[] = {0, 333, 662, 996, 1338, 1658, 2006};
+  size_t startup_timers = 0;
+  uint32_t first = 0;
+  for (const auto& timer : scheduler_queue()) {
+    if (timer.name.find("v3_acquire_") != 0 && timer.name != "v3_wifi") continue;
+    ASSERT(startup_timers < 7, "only seven startup timers");
+    if (startup_timers == 0) first = timer.trigger_ms;
+    ASSERT_EQ(timer.trigger_ms - first, offsets[startup_timers] + startup_timers,
+              "captured startup spacing retained");
+    ++startup_timers;
+  }
+  ASSERT_EQ(startup_timers, static_cast<size_t>(7), "six A0 timers and initial 0D");
+  dev.performHandshakeStep();  // Re-entry while waiting must not schedule again.
+  run_scheduler();
+  ASSERT_EQ(dev.uart_.tx_count(), static_cast<size_t>(8),
+            "MAD50P1AWS no ACK: announce, six A0, initial 0D");
+  for (size_t i = 1; i <= 6; ++i) {
+    const auto& frame = dev.uart_.tx_at(i).data;
+    ASSERT_EQ(frame.size(), static_cast<size_t>(31), "A0 frame length");
+    ASSERT_EQ(frame[9], 0xA0, "six consecutive A0 frames");
+    ASSERT_EQ(frame.back(), 0xDA, "captured A0 checksum");
+  }
+  const auto& initial = dev.uart_.tx_at(7).data;
+  ASSERT_EQ(initial[9], 0x0D, "initial 0D follows A0 burst");
+  ASSERT_EQ(initial[12], 0, "initial 0D has no IP");
+  ASSERT_EQ(initial.back(), 0x67, "captured initial 0D checksum");
+  ASSERT(!dev.is_device_info_known(), "timeout does not fabricate device info");
+
+  // A late ACK still parses and schedules only the existing two connected frames.
+  dev.inject(MAD50P1AWS_DEVICE_ACK, sizeof(MAD50P1AWS_DEVICE_ACK));
+  dev.inject(MAD50P1AWS_DEVICE_ACK, sizeof(MAD50P1AWS_DEVICE_ACK));
+  ASSERT(dev.is_device_info_known(), "late long 07 parsed");
+  ASSERT_EQ(dev.get_mcu_protocol_version(), 3, "late long 07 protocol parsed");
+  run_scheduler();
+  ASSERT_EQ(dev.uart_.tx_count(), static_cast<size_t>(10),
+            "late/repeated ACK does not repeat A0 or initial 0D");
+  ASSERT(!dev.is_handshake_done(),
+         "MAD50P1AWS no ACK: handshake remains incomplete");
+}
+
 // ══════════════════════════════════════════════════════════════════════════
 //  Runner
 // ══════════════════════════════════════════════════════════════════════════
@@ -276,6 +353,8 @@ int main() {
   total += run_test("1.5  V2 early status", test_v2_early_status);
   total += run_test("1.6  V1 seed-status-as-ping (V1.3)", test_v1_seed_status_ping);
   total += run_test("1.7  V1.3 agreement full cycle", test_v1_3_full_cycle);
+  total += run_test("1.8  MAD50P1AWS captured handshake", test_mad50p1aws_handshake);
+  total += run_test("1.9  MAD50P1AWS no-ACK timeout", test_mad50p1aws_no_ack_startup);
 
   if (total == 0) {
     printf("\n✓ All handshake tests passed!\n");

@@ -1,6 +1,6 @@
 #pragma once
 // Protocol vtable — keeps protocol-specific behavior in separate version files.
-// Included by midea_dehum.h, implemented by midea_dehum_protocol_v{1,2}.cpp.
+// Included by midea_dehum.h, implemented by midea_dehum_protocol_v{1,2,3}.cpp.
 
 #include <cstddef>
 #include <cstdint>
@@ -32,7 +32,7 @@ struct ProtocolVTable {
 
   // Send a control command to the MCU.
   // V1 builds its payload inline via component accessors; V2 builds its own payload.
-  // Both protocols provide this via their vtable — sendSetStatus() is a thin
+  // All protocols provide this via their vtable — sendSetStatus() is a thin
   // dispatcher with no fallback logic.
   void (*send_set_status)(MideaDehumComponent* self);
 
@@ -40,12 +40,15 @@ struct ProtocolVTable {
   uint32_t startup_delay_ms;
 };
 
-// Defined in midea_dehum_protocol_v{1,2}.cpp (guarded by MIDEA_PROTOCOL_V{1,2})
+// Defined in midea_dehum_protocol_v{1,2,3}.cpp (guarded by MIDEA_PROTOCOL_V{1,2,3})
 #ifdef MIDEA_PROTOCOL_V1
 extern const ProtocolVTable PROTOCOL_V1;
 #endif
 #ifdef MIDEA_PROTOCOL_V2
 extern const ProtocolVTable PROTOCOL_V2;
+#endif
+#ifdef MIDEA_PROTOCOL_V3
+extern const ProtocolVTable PROTOCOL_V3;
 #endif
 
 }  // namespace midea_dehum

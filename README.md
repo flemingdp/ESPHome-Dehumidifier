@@ -96,6 +96,8 @@ your device — it skips the auto-detect window and speeds up boot.
 
 Models without USB or Wi-Fi button (e.g., Comfee MDDF-20DEN7, Emelson EMLDH20DFR29) could also work with small wiring changes.
 
+For the V3 MAD50P1AWS / SK105 wire protocol, see [`protocol_v3.md`](components/midea_dehum/protocol_v3.md).
+
 For the full V2 wire protocol specification (frame layouts, handshake sequence, status byte map), see [`protocol_v2.md`](components/midea_dehum/protocol_v2.md).
 
 ---
@@ -127,6 +129,12 @@ The dehumidifier's USB-A port carries UART signals (not USB data) at 9600 baud. 
 > **⚠ D+/D- are crossed:** Pin 2 (D-) is the MCU's **TX** line, and Pin 3 (D+) is the MCU's **RX** line. Connect MCU TX → ESP RX and MCU RX → ESP TX. If you get no response from the MCU, swap the two data wires.
 
 ### Build Options
+
+For the tested **MAD50P1AWS / Cube 50 Pint with pump (May 2024), SK105,
+ESP32 DevKit v1** configuration, follow the [V3 hardware wiring guide](HARDWARE.md#v3-hardware-wiring---mad50p1aws--sk105).
+It uses GPIO17 TX through an S8050 and 1k base resistor with UART inversion,
+and direct D- to GPIO16 RX. Direct push-pull TX did not work on that unit.
+Use the linked V3 UART/component YAML instead of the generic example below.
 
 There are two common approaches depending on your board and comfort level:
 
@@ -291,6 +299,7 @@ All entities appear automatically in Home Assistant with native ESPHome support.
 | `midea_dehum_features.cpp` | Optional feature implementations (ion, pump, beep, sleep, timer, capabilities) |
 | `midea_dehum_protocol.h` | `ProtocolVTable` interface — one struct per version |
 | `midea_dehum_protocol_v1.cpp` | Protocol v1: Chreece original handshake + status logic |
+| `midea_dehum_protocol_v3.cpp` | Protocol v3: MAD50P1AWS / SK105 handshake and sequenced controls |
 | `midea_dehum_protocol_v2.cpp` | Protocol v2: MAD50PS1QWT-A verified handshake + Midea Cube 50 support |
 | `midea_dehum_protocol_auto.cpp` / `.h` | Auto-detect state machine (only compiled when `protocol_version: 0`) |
 | `__init__.py` | Main component config — UART wiring, protocol selection, display modes |

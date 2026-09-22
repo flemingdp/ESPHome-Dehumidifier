@@ -83,6 +83,18 @@ static void test_ad_v2_ack_detection() {
   ASSERT(dev.get_protocol_ptr()->version == 2, "auto-detect: protocol locked to V2");
 }
 
+static void test_ad_v3_ack_detection() {
+  TestMideaDehum dev;
+  dev.set_protocol_version(0);
+  dev.setup();
+  run_scheduler_once();
+
+  dev.inject(MAD50P1AWS_DEVICE_ACK, sizeof(MAD50P1AWS_DEVICE_ACK));
+
+  ASSERT(dev.ad_state_.active == false, "auto-detect V3: locked after ACK");
+  ASSERT(dev.get_protocol_ptr()->version == 3, "auto-detect: protocol locked to V3");
+}
+
 #endif  // MIDEA_PROTOCOL_AUTO
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -132,7 +144,7 @@ int main(int argc, char** argv) {
   printf("==================================\\n");
 
   if (strcmp(mode, "all") == 0 || strcmp(mode, "v1") == 0 ||
-      strcmp(mode, "v2") == 0) {
+      strcmp(mode, "v2") == 0 || strcmp(mode, "v3") == 0) {
 
     int total = 0;
 
@@ -144,6 +156,8 @@ int main(int argc, char** argv) {
     total += run_test("1.5  V2 early status", test_v2_early_status);
     total += run_test("1.6  V1 seed-status-as-ping (V1.3)", test_v1_seed_status_ping);
     total += run_test("1.7  V1.3 agreement full cycle", test_v1_3_full_cycle);
+    total += run_test("1.8  MAD50P1AWS captured handshake", test_mad50p1aws_handshake);
+    total += run_test("1.9  MAD50P1AWS no-ACK timeout", test_mad50p1aws_no_ack_startup);
 
     printf("\\n=== Category 2: Command Tests ===\\n");
     total += run_test("2.1   Power ON/OFF", test_power);
@@ -180,6 +194,17 @@ int main(int argc, char** argv) {
 #endif
 #ifdef USE_MIDEA_DEHUM_RESET_WATER_LEVEL
     total += run_test("2.21  V2 Reset water level", test_v2_cmd_reset_water_level);
+#endif
+    total += run_test("2.22  V3 factory power ON", test_v3_factory_power_on);
+    total += run_test("2.23  V3 factory power OFF", test_v3_factory_power_off);
+    total += run_test("2.24  V3 target humidity", test_v3_factory_target_humidity);
+    total += run_test("2.25  V3 poll sequence", test_v3_poll_sequence);
+    total += run_test("2.26  V3 confirmed field encodings", test_v3_confirmed_field_encodings);
+    total += run_test("2.27  V3 Smart/Low/60 regression", test_v3_smart_low_target_60_regression);
+    total += run_test("2.28  V3 status flags experiment", test_v3_status_flags_not_copied_to_control);
+    total += run_test("2.30  V3 uninitialized fan fallback", test_v3_uninitialized_fan_fallback);
+#ifdef USE_MIDEA_DEHUM_PUMP
+    total += run_test("2.29  V3 factory pump", test_v3_factory_pump);
 #endif
 
     printf("\\n=== Category 3: E2E Tests ===\\n");
@@ -238,6 +263,7 @@ int main(int argc, char** argv) {
 #ifdef USE_MIDEA_DEHUM_TIMER
     total += run_test("8.4  V2 status timer 2h", test_v2_state_timer);
 #endif
+    total += run_test("8.5  MAD50P1AWS short V1 status", test_mad50p1aws_state_parsing);
 
 #ifdef MIDEA_PROTOCOL_AUTO
     if (strcmp(mode, "all") == 0) {
@@ -246,6 +272,7 @@ int main(int argc, char** argv) {
       total += run_test("AD.2  V1 ACK detection", test_ad_response_detection);
       total += run_test("AD.3  V1 lock-in after ACK", test_ad_round_progression);
       total += run_test("AD.4  V2 ACK detection", test_ad_v2_ack_detection);
+      total += run_test("AD.5  V3 ACK detection", test_ad_v3_ack_detection);
     }
 #endif
 
@@ -259,6 +286,6 @@ int main(int argc, char** argv) {
     return total > 0 ? 1 : 0;
   }
 
-  printf("Usage: %s [v1|v2|all]\\n", argv[0]);
+  printf("Usage: %s [v1|v2|v3|all]\\n", argv[0]);
   return 1;
 }

@@ -447,6 +447,307 @@ static void test_v2_cmd_reset_water_level() {
 #endif
 
 // ══════════════════════════════════════════════════════════════════════════
+//  V3 captured transaction tests
+// ══════════════════════════════════════════════════════════════════════════
+
+static void test_v3_factory_power_on() {
+  TestMideaDehum dev;
+  dev.set_protocol_version(3);
+  dev.set_handshake_enabled(false);
+  dev.setup();
+
+  dev.inject(MAD50P1AWS_BEFORE_POWER_ON, sizeof(MAD50P1AWS_BEFORE_POWER_ON));
+  dev.seed_feature_flags(0x00);  // captured request carried zero at byte 19
+  dev.seed_v3_sequence(0x08);
+  tx_clear(dev);
+  dev.cmd_power(true);
+
+  const CapturedFrame& frame = tx_last(dev, "V3 factory power ON");
+  ASSERT_EQ(frame.data.size(), sizeof(MAD50P1AWS_FACTORY_POWER_ON),
+            "V3 power ON: frame is 34 bytes");
+  ASSERT(frame.data.size() == sizeof(MAD50P1AWS_FACTORY_POWER_ON) &&
+             memcmp(frame.data.data(), MAD50P1AWS_FACTORY_POWER_ON,
+                    sizeof(MAD50P1AWS_FACTORY_POWER_ON)) == 0,
+         "V3 power ON: byte-for-byte factory frame match");
+  ASSERT(dev.v3_command_pending(), "V3 power ON: command response pending");
+
+  uint8_t wrong_sequence_response[sizeof(MAD50P1AWS_FACTORY_POWER_ON_RESPONSE)];
+  memcpy(wrong_sequence_response, MAD50P1AWS_FACTORY_POWER_ON_RESPONSE,
+         sizeof(wrong_sequence_response));
+  wrong_sequence_response[sizeof(wrong_sequence_response) - 3] = 0x0A;
+  dev.inject(wrong_sequence_response, sizeof(wrong_sequence_response));
+  ASSERT(dev.v3_command_pending(),
+         "V3 power ON: mismatched response leaves command pending");
+
+  dev.inject(MAD50P1AWS_FACTORY_POWER_ON_RESPONSE,
+             sizeof(MAD50P1AWS_FACTORY_POWER_ON_RESPONSE));
+  dev.seed_feature_flags(0x00);  // captured request carried zero at byte 19
+  ASSERT(!dev.v3_command_pending(), "V3 power ON: matching response correlated");
+  ASSERT(dev.raw_power(), "V3 power ON: response state parsed");
+}
+
+static void test_v3_factory_power_off() {
+  TestMideaDehum dev;
+  dev.set_protocol_version(3);
+  dev.set_handshake_enabled(false);
+  dev.setup();
+  dev.inject(MAD50P1AWS_FACTORY_POWER_ON_RESPONSE,
+             sizeof(MAD50P1AWS_FACTORY_POWER_ON_RESPONSE));
+  dev.seed_feature_flags(0x00);  // captured requests carried zero at byte 19
+  dev.seed_v3_sequence(0x08);
+
+  tx_clear(dev);
+  dev.cmd_power(false);
+  const CapturedFrame& frame = tx_last(dev, "V3 factory power OFF");
+  ASSERT(frame.data.size() == sizeof(MAD50P1AWS_FACTORY_POWER_OFF) &&
+             memcmp(frame.data.data(), MAD50P1AWS_FACTORY_POWER_OFF,
+                    sizeof(MAD50P1AWS_FACTORY_POWER_OFF)) == 0,
+         "V3 power OFF: byte-for-byte factory frame match");
+
+  dev.inject(MAD50P1AWS_FACTORY_POWER_OFF_RESPONSE,
+             sizeof(MAD50P1AWS_FACTORY_POWER_OFF_RESPONSE));
+  ASSERT(!dev.v3_command_pending(), "V3 power OFF: response correlated");
+  ASSERT(!dev.raw_power(), "V3 power OFF: response state parsed");
+  ASSERT_EQ(dev.raw_setpoint(), 55,
+            "V3 power OFF: target humidity remains 55%");
+}
+
+static void test_v3_factory_target_humidity() {
+  TestMideaDehum dev;
+  dev.set_protocol_version(3);
+  dev.set_handshake_enabled(false);
+  dev.setup();
+  dev.inject(MAD50P1AWS_FACTORY_POWER_ON_RESPONSE,
+             sizeof(MAD50P1AWS_FACTORY_POWER_ON_RESPONSE));
+  dev.seed_feature_flags(0x00);  // captured requests carried zero at byte 19
+  dev.seed_v3_sequence(0x0B);
+
+  tx_clear(dev);
+  dev.cmd_humidity(60.0f);
+  const CapturedFrame& target_60 = tx_last(dev, "V3 factory target 60");
+  ASSERT(target_60.data.size() == sizeof(MAD50P1AWS_FACTORY_TARGET_60) &&
+             memcmp(target_60.data.data(), MAD50P1AWS_FACTORY_TARGET_60,
+                    sizeof(MAD50P1AWS_FACTORY_TARGET_60)) == 0,
+         "V3 target 60: byte-for-byte factory frame match");
+  dev.inject(MAD50P1AWS_FACTORY_TARGET_60_RESPONSE,
+             sizeof(MAD50P1AWS_FACTORY_TARGET_60_RESPONSE));
+  ASSERT(!dev.v3_command_pending(), "V3 target 60: response correlated");
+  ASSERT(dev.raw_power(), "V3 target 60: power remains ON");
+  ASSERT_EQ(dev.raw_setpoint(), 60, "V3 target 60: response state parsed");
+
+  dev.seed_feature_flags(0x00);  // captured request carried zero at byte 19
+  dev.seed_v3_sequence(0x5E);
+  tx_clear(dev);
+  dev.cmd_humidity(55.0f);
+  const CapturedFrame& target_55 = tx_last(dev, "V3 factory target 55");
+  ASSERT(target_55.data.size() == sizeof(MAD50P1AWS_FACTORY_TARGET_55) &&
+             memcmp(target_55.data.data(), MAD50P1AWS_FACTORY_TARGET_55,
+                    sizeof(MAD50P1AWS_FACTORY_TARGET_55)) == 0,
+         "V3 target 55: byte-for-byte factory frame match");
+  dev.inject(MAD50P1AWS_FACTORY_TARGET_55_RESPONSE,
+             sizeof(MAD50P1AWS_FACTORY_TARGET_55_RESPONSE));
+  ASSERT(!dev.v3_command_pending(), "V3 target 55: response correlated");
+  ASSERT(dev.raw_power(), "V3 target 55: power remains ON");
+  ASSERT_EQ(dev.raw_setpoint(), 55, "V3 target 55: response state parsed");
+}
+
+static void test_v3_poll_sequence() {
+  TestMideaDehum dev;
+  dev.set_protocol_version(3);
+  dev.set_handshake_enabled(false);
+  dev.setup();
+  dev.seed_v3_sequence(0x53);
+
+  tx_clear(dev);
+  dev.getStatus();
+  const CapturedFrame& frame = tx_last(dev, "V3 sequenced poll");
+  ASSERT_EQ(frame.data.size(), static_cast<size_t>(33),
+            "V3 poll: frame is 33 bytes");
+  ASSERT_EQ(frame.data[1], 0x20, "V3 poll: length byte is 0x20");
+  ASSERT_EQ(frame.data[8], 0x00, "V3 poll: agreement is 0x00");
+  ASSERT_EQ(frame.data[9], 0x03, "V3 poll: message type is 0x03");
+  ASSERT_EQ(frame.data[30], 0x54, "V3 poll: sequence is before CRC/checksum");
+
+  uint32_t sum = 0;
+  for (size_t i = 1; i < frame.data.size(); i++) sum += frame.data[i];
+  ASSERT_EQ(static_cast<int>(sum & 0xFF), 0,
+            "V3 poll: final checksum validates");
+
+  ASSERT(frame.data.size() == sizeof(MAD50P1AWS_FACTORY_QUERY_SEQ_54) &&
+             memcmp(frame.data.data(), MAD50P1AWS_FACTORY_QUERY_SEQ_54,
+                    sizeof(MAD50P1AWS_FACTORY_QUERY_SEQ_54)) == 0,
+         "V3 poll: byte-for-byte factory query match");
+}
+
+static void test_v3_confirmed_field_encodings() {
+  TestMideaDehum dev;
+  dev.set_protocol_version(3);
+  dev.set_handshake_enabled(false);
+  dev.setup();
+  dev.inject(MAD50P1AWS_STATUS_HUM50, sizeof(MAD50P1AWS_STATUS_HUM50));
+
+  for (uint8_t mode : {2, 3, 1}) {
+    tx_clear(dev);
+    dev.cmd_mode(mode);
+    const CapturedFrame& frame = tx_last(dev, "V3 mode command");
+    ASSERT_EQ(frame.data[12], mode, "V3 mode: request uses status mode value");
+    ASSERT_EQ(frame.data[11], 0x43, "V3 mode: power preserved");
+    ASSERT_EQ(frame.data[13], 0xD0, "V3 mode: high fan preserved/encoded");
+    ASSERT_EQ(frame.data[17], 0x32, "V3 mode: humidity preserved");
+    ASSERT_EQ(frame.data[19], 0x00, "V3 mode: status flags are not copied");
+    dev.clear_v3_pending();
+  }
+
+  tx_clear(dev);
+  dev.cmd_fan(esphome::climate::CLIMATE_FAN_LOW);
+  const CapturedFrame& low = tx_last(dev, "V3 low fan command");
+  ASSERT_EQ(low.data[13], 0xA8, "V3 fan: low status maps to request A8");
+  ASSERT_EQ(low.data[12], 0x01, "V3 fan: Normal mode preserved");
+  ASSERT_EQ(low.data[17], 0x32, "V3 fan: humidity preserved");
+  ASSERT_EQ(low.data[19], 0x00, "V3 fan: status flags are not copied");
+  dev.clear_v3_pending();
+
+  tx_clear(dev);
+  dev.cmd_fan(esphome::climate::CLIMATE_FAN_HIGH);
+  const CapturedFrame& high = tx_last(dev, "V3 high fan command");
+  ASSERT_EQ(high.data[13], 0xD0, "V3 fan: high status maps to request D0");
+  dev.clear_v3_pending();
+
+  for (uint8_t humidity : {35, 50, 55, 60}) {
+    tx_clear(dev);
+    dev.cmd_humidity(humidity);
+    const CapturedFrame& frame = tx_last(dev, "V3 humidity command");
+    ASSERT_EQ(frame.data[17], humidity, "V3 humidity: literal percentage");
+    ASSERT_EQ(frame.data[11], 0x43, "V3 humidity: power preserved");
+    ASSERT_EQ(frame.data[12], 0x01, "V3 humidity: Normal mode preserved");
+    ASSERT_EQ(frame.data[13], 0xD0, "V3 humidity: high fan preserved");
+    ASSERT_EQ(frame.data[19], 0x00, "V3 humidity: status flags are not copied");
+    dev.clear_v3_pending();
+  }
+}
+
+static void test_v3_uninitialized_fan_fallback() {
+  TestMideaDehum dev;
+  dev.set_protocol_version(3);
+  dev.setup();  // No appliance state or ACK is injected.
+  ASSERT_EQ(dev.raw_fan(), 0x3C, "V3 cold-start fan is the legacy default");
+  ASSERT(!dev.is_handshake_done(), "V3 has not acquired initial state");
+
+  // Check both untouched timer-enabled defaults and the factory timer sentinel.
+  static const uint8_t expected[][34] = {
+      {0xAA, 0x21, 0xA1, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0x48, 0x42, 0x03, 0xA8, 0x00, 0x00, 0x00, 0x32, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0xF8, 0xDC},
+      {0xAA, 0x21, 0xA1, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0x48, 0x42, 0x03, 0xA8, 0x7F, 0x7F, 0x00, 0x32, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x7F, 0x57},
+  };
+  for (size_t i = 0; i < 2; ++i) {
+    dev.set_last_on_raw(i == 0 ? 0x00 : 0x7F);
+    dev.set_last_off_raw(i == 0 ? 0x00 : 0x7F);
+    dev.cmd_power(true);  // Ensure OFF is an actual UI change, not a no-op.
+    dev.seed_v3_sequence(0);
+    dev.clear_v3_pending();
+    tx_clear(dev);
+    dev.cmd_power(false);
+    ASSERT_EQ(dev.uart_.tx_count(), static_cast<size_t>(1), "fallback transmits one command");
+    const auto& frame = tx_last(dev, "V3 diagnostic fan fallback").data;
+    ASSERT(frame.size() == sizeof(expected[i]) &&
+               memcmp(frame.data(), expected[i], sizeof(expected[i])) == 0,
+           "fallback frame matches length, fields, sequence, CRC and checksum");
+    ASSERT(dev.v3_command_pending(), "fallback uses sequenced command sender");
+    ASSERT_EQ(dev.raw_fan(), 0x3C, "fallback does not rewrite internal fan state");
+  }
+
+  tx_clear(dev);
+  dev.cmd_mode(4);
+  ASSERT_EQ(dev.uart_.tx_count(), static_cast<size_t>(0), "unsupported V3 mode still rejected");
+}
+
+static void test_v3_smart_low_target_60_regression() {
+  TestMideaDehum dev;
+  dev.set_protocol_version(3);
+  dev.set_handshake_enabled(false);
+  dev.setup();
+  dev.inject(MAD50P1AWS_STATUS_SMART_LOW_TARGET_60,
+             sizeof(MAD50P1AWS_STATUS_SMART_LOW_TARGET_60));
+
+  ASSERT(dev.raw_power(), "V3 parse regression: power is ON");
+  ASSERT_EQ(dev.raw_mode(), 0x03, "V3 parse regression: mode is Smart");
+  ASSERT_EQ(dev.raw_fan(), 0x28, "V3 parse regression: fan comes from byte 13");
+  ASSERT_EQ(dev.raw_setpoint(), 60,
+            "V3 parse regression: target comes from byte 17");
+
+  // A stale/unsupported MEDIUM call used to overwrite V3 fanSpeed with
+  // decimal 60 (0x3C). It must now leave the decoded V3 fan state untouched.
+  tx_clear(dev);
+  dev.cmd_fan(esphome::climate::CLIMATE_FAN_MEDIUM);
+  ASSERT_EQ(dev.raw_fan(), 0x28,
+            "V3 parse regression: MEDIUM does not corrupt fan state");
+  ASSERT_EQ(dev.uart_.tx_count(), static_cast<size_t>(0),
+            "V3 parse regression: unsupported MEDIUM sends no command");
+
+  dev.seed_v3_sequence(0x20);
+  tx_clear(dev);
+  dev.cmd_power(false);
+  const CapturedFrame& frame = tx_last(dev, "V3 preserved Smart/Low/60 command");
+  ASSERT_EQ(frame.data[11], 0x42, "V3 preserved state: power changes to OFF");
+  ASSERT_EQ(frame.data[12], 0x03, "V3 preserved state: mode remains Smart");
+  ASSERT_EQ(frame.data[13], 0xA8, "V3 preserved state: Low encodes as A8");
+  ASSERT_EQ(frame.data[17], 0x3C, "V3 preserved state: target remains 60");
+  ASSERT_EQ(frame.data[19], 0x00,
+            "V3 preserved state: status flags are not copied");
+}
+
+static void test_v3_status_flags_not_copied_to_control() {
+  TestMideaDehum dev;
+  dev.set_protocol_version(3);
+  dev.set_handshake_enabled(false);
+  dev.setup();
+  dev.inject(MAD50P1AWS_STATUS_LOW_TARGET_75_FLAGS_18,
+             sizeof(MAD50P1AWS_STATUS_LOW_TARGET_75_FLAGS_18));
+
+  dev.seed_v3_sequence(0xE1);
+  tx_clear(dev);
+  dev.cmd_humidity(70.0f);
+  const CapturedFrame& frame = tx_last(dev, "V3 target 75 to 70");
+  ASSERT_EQ(frame.data[11], 0x43, "V3 flags experiment: power request is ON");
+  ASSERT_EQ(frame.data[12], 0x01, "V3 flags experiment: mode is Normal");
+  ASSERT_EQ(frame.data[13], 0xA8, "V3 flags experiment: low fan encodes A8");
+  ASSERT_EQ(frame.data[17], 0x46, "V3 flags experiment: target is 70%");
+  ASSERT_EQ(frame.data[19], 0x00,
+            "V3 flags experiment: status 18 does not enter command");
+  ASSERT_EQ(frame.data[31], 0xE2, "V3 flags experiment: sequence is retained");
+}
+
+#ifdef USE_MIDEA_DEHUM_PUMP
+static void test_v3_factory_pump() {
+  TestMideaDehum dev;
+  dev.set_protocol_version(3);
+  dev.set_handshake_enabled(false);
+  dev.setup();
+  dev.inject(MAD50P1AWS_FACTORY_PUMP_OFF_RESPONSE,
+             sizeof(MAD50P1AWS_FACTORY_PUMP_OFF_RESPONSE));
+
+  dev.seed_v3_sequence(0x02);
+  tx_clear(dev);
+  dev.set_pump_state(true);
+  const CapturedFrame& pump_on = tx_last(dev, "V3 factory pump ON");
+  ASSERT_EQ(pump_on.data[19], 0x08,
+            "V3 pump ON: command contains only confirmed pump bit");
+  dev.inject(MAD50P1AWS_FACTORY_PUMP_ON_RESPONSE,
+             sizeof(MAD50P1AWS_FACTORY_PUMP_ON_RESPONSE));
+  ASSERT(!dev.v3_command_pending(), "V3 pump ON: response correlated");
+
+  dev.seed_v3_sequence(0x3D);
+  tx_clear(dev);
+  dev.set_pump_state(false);
+  const CapturedFrame& pump_off = tx_last(dev, "V3 factory pump OFF");
+  ASSERT_EQ(pump_off.data[19], 0x00,
+            "V3 pump OFF: command omits status-only flags");
+  dev.inject(MAD50P1AWS_FACTORY_PUMP_OFF_RESPONSE,
+             sizeof(MAD50P1AWS_FACTORY_PUMP_OFF_RESPONSE));
+  ASSERT(!dev.v3_command_pending(), "V3 pump OFF: response correlated");
+}
+#endif
+
+// ══════════════════════════════════════════════════════════════════════════
 //  Runner
 // ══════════════════════════════════════════════════════════════════════════
 
@@ -490,6 +791,17 @@ int main() {
 #endif
 #ifdef USE_MIDEA_DEHUM_RESET_WATER_LEVEL
   total += run_test("2.21  V2 Reset water level", test_v2_cmd_reset_water_level);
+#endif
+  total += run_test("2.22  V3 factory power ON", test_v3_factory_power_on);
+  total += run_test("2.23  V3 factory power OFF", test_v3_factory_power_off);
+  total += run_test("2.24  V3 target humidity", test_v3_factory_target_humidity);
+  total += run_test("2.25  V3 poll sequence", test_v3_poll_sequence);
+  total += run_test("2.26  V3 confirmed field encodings", test_v3_confirmed_field_encodings);
+  total += run_test("2.27  V3 Smart/Low/60 regression", test_v3_smart_low_target_60_regression);
+  total += run_test("2.28  V3 status flags experiment", test_v3_status_flags_not_copied_to_control);
+  total += run_test("2.30  V3 uninitialized fan fallback", test_v3_uninitialized_fan_fallback);
+#ifdef USE_MIDEA_DEHUM_PUMP
+  total += run_test("2.29  V3 factory pump", test_v3_factory_pump);
 #endif
 
   if (total == 0) {

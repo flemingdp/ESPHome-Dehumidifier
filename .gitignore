@@ -9,6 +9,7 @@ __pycache__/
 .esphome/
 
 # Test build artifacts
+components/midea_dehum/tests/*.d
 components/midea_dehum/tests/*.o
 components/midea_dehum/tests/*.o.tmp
 components/midea_dehum/tests/test_harness

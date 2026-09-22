@@ -129,6 +129,9 @@ void MideaDehumComponent::set_pump_state(bool on) {
   if (this->pump_state_ == on) return;
   this->pump_state_ = on;
   if (this->pump_switch_ != nullptr) this->pump_switch_->publish_state(on);
+#ifdef MIDEA_PROTOCOL_V3
+  this->mark_v3_pump_command(on);
+#endif
   this->sendSetStatus();
 }
 

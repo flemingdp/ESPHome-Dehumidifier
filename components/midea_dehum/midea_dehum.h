@@ -287,6 +287,7 @@ public:
   bool get_swing_state() const { return this->swing_state_; }
 #endif
   uint8_t get_tank_level() const { return this->tank_level_; }
+  uint8_t get_feature_flags() const { return this->feature_flags_; }
 #ifdef USE_MIDEA_DEHUM_FILTER_BUTTON
   bool pop_filter_cleaned_flag() {
     bool f                     = this->filter_cleaned_flag_;
@@ -328,7 +329,7 @@ public:
   void sendClimateState();
 
   // ── 6. Status decoding (implemented in midea_dehum_state.cpp) ───────────
-  void parseState(const uint8_t* buf);
+  void parseState(const uint8_t* buf, size_t len);
 
   // ── 7. Protocol wiring ──────────────────────────────────────────────────
   void set_protocol_version(uint8_t version);
@@ -344,6 +345,18 @@ public:
   // Low‑level TX — called by protocol code and features
   void sendMessage(uint8_t msg_type, uint8_t agreement_version, uint8_t frame_SyncCheck,
                    uint8_t payload_length, uint8_t* payload);
+#ifdef MIDEA_PROTOCOL_V3
+  uint8_t sendV3SequencedMessage(uint8_t msg_type, const uint8_t* payload,
+                                 uint8_t payload_length, bool command);
+  bool matchV3CommandResponse(uint8_t sequence);
+  void mark_v3_pump_command(bool on) {
+    this->v3_pump_command_pending_ = true;
+    this->v3_pump_command_on_ = on;
+  }
+  bool v3_pump_command_pending() const { return this->v3_pump_command_pending_; }
+  bool v3_pump_command_on() const { return this->v3_pump_command_on_; }
+  void clear_v3_pump_command() { this->v3_pump_command_pending_ = false; }
+#endif
   void updateAndSendNetworkStatus(bool connected);
   void getStatus();
 
@@ -365,10 +378,14 @@ public:
     return this->user_protocol_version_ == 2 ||
            (this->protocol_ != nullptr && this->protocol_->version == 2);
   }
+  bool is_v3_active() const {
+    return this->user_protocol_version_ == 3 ||
+           (this->protocol_ != nullptr && this->protocol_->version == 3);
+  }
 
   // ── Protocol vtable + auto‑detect state (public, accessed by protocol_auto.cpp free fns) ──
   const ProtocolVTable* protocol_{nullptr};
-  uint8_t user_protocol_version_{0};  // 0=auto, 1=V1, 2=V2
+  uint8_t user_protocol_version_{0};  // 0=auto, 1=V1, 2=V2, 3=MAD50P1AWS
   MideaAutoDetect ad_state_;
 
 protected:
@@ -398,6 +415,16 @@ protected:
   uint8_t mcu_protocol_version_ = 0x00;  // from MCU data[7]
   bool device_info_known_       = false;
 
+#ifdef MIDEA_PROTOCOL_V3
+  // V3 transactions append this ID to the type-specific payload, immediately
+  // before CRC8 and the final checksum. A command response echoes the ID.
+  uint8_t v3_transaction_sequence_{0};
+  uint8_t v3_pending_command_sequence_{0};
+  bool v3_command_pending_{false};
+  bool v3_pump_command_pending_{false};
+  bool v3_pump_command_on_{false};
+#endif
+
   // ── External dependencies ────────────────────────────────────────────
   uart::UARTComponent* uart_{nullptr};
   size_t rx_len_{0};  // reusable across loops (was static in handleUart)
@@ -415,6 +442,7 @@ protected:
   sensor::Sensor* tank_level_sensor_{nullptr};
 #endif
   uint8_t tank_level_{0};  // always parsed from status byte 20 (V2 needs it for cmd[15])
+  uint8_t feature_flags_{0};  // raw status byte 19; preserve unknown bits on V3 writes
 #ifdef USE_MIDEA_DEHUM_PM25
   sensor::Sensor* pm25_sensor_{nullptr};
   uint16_t pm25_{0};
