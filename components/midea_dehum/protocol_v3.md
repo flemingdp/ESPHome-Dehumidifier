@@ -189,7 +189,7 @@ SS CC CK
 | 13           | 3           | Status `28` → request `A8` Low; status `50` → request `D0` High          |
 | 14–16        | 4–6         | Last received raw timer bytes, or `7F 7F 00` without timer support       |
 | 17           | 7           | Direct target percentage, e.g. `37` = 55%, `3C` = 60%                    |
-| 19           | 9           | `08` only for an explicit pending pump-ON request; otherwise `00`        |
+| 19           | 9           | Explicit pump request: `18` ON, `10` OFF; otherwise `00`                 |
 | 18, 20–30    | 8, 10–20    | Zero                                                                     |
 | 31           | —           | Sequence                                                                 |
 | 32–33        | —           | CRC8, checksum                                                           |
@@ -201,7 +201,8 @@ caller. Unsupported modes block the command. An unknown fan value uses Low
 With timer support, commands copy the last raw timer bytes (initially
 `00 00 00`). Without it, they use `7F 7F 00`. New timer settings are not encoded.
 
-Do not copy status flags `10` or `18` into commands. Byte 25 has appeared as
+Do not copy status flags wholesale into commands. Factory pump commands use
+`18` for ON and `10` for OFF; non-pump commands retain `00`. Byte 25 has appeared as
 `00` and `01` in captures; its meaning is unknown, so the encoder sends zero.
 
 Captured power-ON request (Normal, Low, 55%):

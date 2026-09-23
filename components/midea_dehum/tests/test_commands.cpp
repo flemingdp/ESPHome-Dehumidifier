@@ -719,6 +719,10 @@ static void test_v3_status_flags_not_copied_to_control() {
 #ifdef USE_MIDEA_DEHUM_PUMP
 static void test_v3_factory_pump() {
   TestMideaDehum dev;
+  struct TestPumpSwitch : esphome::midea_dehum::MideaPumpSwitch {
+    using MideaPumpSwitch::write_state;
+  } pump;
+  dev.set_pump_switch(&pump);
   dev.set_protocol_version(3);
   dev.set_handshake_enabled(false);
   dev.setup();
@@ -727,20 +731,26 @@ static void test_v3_factory_pump() {
 
   dev.seed_v3_sequence(0x02);
   tx_clear(dev);
-  dev.set_pump_state(true);
+  pump.write_state(true);
   const CapturedFrame& pump_on = tx_last(dev, "V3 factory pump ON");
-  ASSERT_EQ(pump_on.data[19], 0x08,
-            "V3 pump ON: command contains only confirmed pump bit");
+  ASSERT_EQ(pump_on.data.size(), sizeof(MAD50P1AWS_FACTORY_PUMP_ON),
+            "V3 pump ON: factory frame length");
+  ASSERT(memcmp(pump_on.data.data(), MAD50P1AWS_FACTORY_PUMP_ON,
+                sizeof(MAD50P1AWS_FACTORY_PUMP_ON)) == 0,
+         "V3 pump ON: matches complete factory command");
   dev.inject(MAD50P1AWS_FACTORY_PUMP_ON_RESPONSE,
              sizeof(MAD50P1AWS_FACTORY_PUMP_ON_RESPONSE));
   ASSERT(!dev.v3_command_pending(), "V3 pump ON: response correlated");
 
   dev.seed_v3_sequence(0x3D);
   tx_clear(dev);
-  dev.set_pump_state(false);
+  pump.write_state(false);
   const CapturedFrame& pump_off = tx_last(dev, "V3 factory pump OFF");
-  ASSERT_EQ(pump_off.data[19], 0x00,
-            "V3 pump OFF: command omits status-only flags");
+  ASSERT_EQ(pump_off.data.size(), sizeof(MAD50P1AWS_FACTORY_PUMP_OFF),
+            "V3 pump OFF: factory frame length");
+  ASSERT(memcmp(pump_off.data.data(), MAD50P1AWS_FACTORY_PUMP_OFF,
+                sizeof(MAD50P1AWS_FACTORY_PUMP_OFF)) == 0,
+         "V3 pump OFF: matches complete factory command");
   dev.inject(MAD50P1AWS_FACTORY_PUMP_OFF_RESPONSE,
              sizeof(MAD50P1AWS_FACTORY_PUMP_OFF_RESPONSE));
   ASSERT(!dev.v3_command_pending(), "V3 pump OFF: response correlated");

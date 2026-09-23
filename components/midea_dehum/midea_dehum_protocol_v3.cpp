@@ -122,12 +122,12 @@ static void v3_send_set_status(MideaDehumComponent* self) {
   // Confirmed direct percentage encoding: 0x37=55%, 0x3C=60%.
   cmd[7] = s.humiditySetpoint;
 
-  // Status byte 19 includes status-only bits (for example 0x10). Factory
-  // non-pump V3 controls use zero here, so do not copy the raw status byte.
+  // Factory pump writes use 0x18 for ON and 0x10 for OFF. Non-pump
+  // controls use zero here; do not copy the raw status flags.
   uint8_t command_flags = 0x00;
 #ifdef USE_MIDEA_DEHUM_PUMP
-  if (self->v3_pump_command_pending() && self->v3_pump_command_on())
-    command_flags |= 0x08;
+  if (self->v3_pump_command_pending())
+    command_flags = self->v3_pump_command_on() ? 0x18 : 0x10;
 #endif
   cmd[9] = command_flags;
   ESP_LOGD(TAG, "V3 command flags: status=%02X command=%02X pump=%s",
