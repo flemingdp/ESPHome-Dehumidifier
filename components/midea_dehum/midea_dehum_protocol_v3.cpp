@@ -94,8 +94,11 @@ static void v3_send_set_status(MideaDehumComponent* self) {
 
   const auto& s = self->get_state();
   cmd[0] = 0x48;
-  // Confirmed by paired factory captures: 0x43=ON, 0x42=OFF.
+  // Factory commands include bit 6 (beep); honor the optional beep setting.
   cmd[1] = 0x42 | (s.powerOn ? 0x01 : 0x00);
+#ifdef USE_MIDEA_DEHUM_BEEP
+  if (!self->get_beep_state()) cmd[1] &= ~0x40;
+#endif
   ESP_LOGD(TAG, "V3 CONTROL STATE: power=%u mode=%02X fan=%02X target=%02X",
            s.powerOn, s.mode, s.fanSpeed, s.humiditySetpoint);
   if (!v3_encode_mode(s.mode, &cmd[2])) {

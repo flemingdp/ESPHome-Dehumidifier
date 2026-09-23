@@ -184,7 +184,7 @@ SS CC CK
 | Frame offset | Body offset | Encoding                                                                 |
 | ------------ | ----------- | ------------------------------------------------------------------------ |
 | 10           | 0           | Write marker `48`                                                        |
-| 11           | 1           | `43` ON, `42` OFF (factory beep bit retained)                            |
+| 11           | 1           | `03` ON, `02` OFF; add `40` when command beep is enabled                 |
 | 12           | 2           | `01` Normal, `02` Continuous, `03` Smart; other modes reject the command |
 | 13           | 3           | Status `28` → request `A8` Low; status `50` → request `D0` High          |
 | 14–16        | 4–6         | Preserved timer bytes, or pending timer write; see below                |
@@ -197,6 +197,11 @@ SS CC CK
 Controls preserve power, mode, fan, and target humidity unless changed by the
 caller. Unsupported modes block the command. An unknown fan value uses Low
 (`A8`) without changing the stored state; this is a startup fallback.
+
+When the optional beep switch is configured, its saved setting controls bit 6
+of byte 11. Turning it off clears the bit in that command and subsequent
+commands. Without beep support compiled in, the factory beep-enabled values
+`43`/`42` are retained. This controls command beeps, not physical-panel sounds.
 
 With timer support, commands preserve the last raw timer bytes (initially
 `00 00 00`) unless a timer write is pending. Without it, they use `7F 7F 00`.

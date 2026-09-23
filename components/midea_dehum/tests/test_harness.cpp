@@ -206,6 +206,7 @@ int main(int argc, char** argv) {
 #ifdef USE_MIDEA_DEHUM_PUMP
     total += run_test("2.29  V3 factory pump", test_v3_factory_pump);
     total += run_test("V3 timer and filter", test_v3_timer_and_filter);
+    total += run_test("V3 beep switch", test_v3_beep_switch);
 #endif
 
     printf("\\n=== Category 3: E2E Tests ===\\n");

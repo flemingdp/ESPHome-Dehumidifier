@@ -455,6 +455,7 @@ static void test_v3_factory_power_on() {
   dev.set_protocol_version(3);
   dev.set_handshake_enabled(false);
   dev.setup();
+  dev.set_beep_state(true);  // Factory captures have command beeps enabled.
 
   dev.inject(MAD50P1AWS_BEFORE_POWER_ON, sizeof(MAD50P1AWS_BEFORE_POWER_ON));
   dev.seed_feature_flags(0x00);  // captured request carried zero at byte 19
@@ -491,6 +492,7 @@ static void test_v3_factory_power_off() {
   dev.set_protocol_version(3);
   dev.set_handshake_enabled(false);
   dev.setup();
+  dev.set_beep_state(true);  // Factory captures have command beeps enabled.
   dev.inject(MAD50P1AWS_FACTORY_POWER_ON_RESPONSE,
              sizeof(MAD50P1AWS_FACTORY_POWER_ON_RESPONSE));
   dev.seed_feature_flags(0x00);  // captured requests carried zero at byte 19
@@ -517,6 +519,7 @@ static void test_v3_factory_target_humidity() {
   dev.set_protocol_version(3);
   dev.set_handshake_enabled(false);
   dev.setup();
+  dev.set_beep_state(true);  // Factory captures have command beeps enabled.
   dev.inject(MAD50P1AWS_FACTORY_POWER_ON_RESPONSE,
              sizeof(MAD50P1AWS_FACTORY_POWER_ON_RESPONSE));
   dev.seed_feature_flags(0x00);  // captured requests carried zero at byte 19
@@ -584,6 +587,7 @@ static void test_v3_confirmed_field_encodings() {
   dev.set_protocol_version(3);
   dev.set_handshake_enabled(false);
   dev.setup();
+  dev.set_beep_state(true);  // Factory captures have command beeps enabled.
   dev.inject(MAD50P1AWS_STATUS_HUM50, sizeof(MAD50P1AWS_STATUS_HUM50));
 
   for (uint8_t mode : {2, 3, 1}) {
@@ -630,6 +634,7 @@ static void test_v3_uninitialized_fan_fallback() {
   TestMideaDehum dev;
   dev.set_protocol_version(3);
   dev.setup();  // No appliance state or ACK is injected.
+  dev.set_beep_state(true);
   ASSERT_EQ(dev.raw_fan(), 0x3C, "V3 cold-start fan is the legacy default");
   ASSERT(!dev.is_handshake_done(), "V3 has not acquired initial state");
 
@@ -665,6 +670,7 @@ static void test_v3_smart_low_target_60_regression() {
   dev.set_protocol_version(3);
   dev.set_handshake_enabled(false);
   dev.setup();
+  dev.set_beep_state(true);  // Factory captures have command beeps enabled.
   dev.inject(MAD50P1AWS_STATUS_SMART_LOW_TARGET_60,
              sizeof(MAD50P1AWS_STATUS_SMART_LOW_TARGET_60));
 
@@ -693,6 +699,32 @@ static void test_v3_smart_low_target_60_regression() {
   ASSERT_EQ(frame.data[17], 0x3C, "V3 preserved state: target remains 60");
   ASSERT_EQ(frame.data[19], 0x00,
             "V3 preserved state: status flags are not copied");
+}
+
+static void test_v3_beep_switch() {
+  TestMideaDehum dev;
+  struct TestBeepSwitch : esphome::midea_dehum::MideaBeepSwitch {
+    using MideaBeepSwitch::write_state;
+  } beep;
+  dev.set_beep_switch(&beep);
+  dev.set_protocol_version(3);
+  dev.set_handshake_enabled(false);
+  dev.setup();
+  dev.inject(MAD50P1AWS_FACTORY_PUMP_OFF_RESPONSE,
+             sizeof(MAD50P1AWS_FACTORY_PUMP_OFF_RESPONSE));
+  for (bool power : {true, false}) {
+    dev.cmd_power(power);
+    beep.write_state(true);
+    ASSERT_EQ(tx_last(dev, "V3 beep on").data[11], power ? 0x43 : 0x42,
+              "V3 beep enabled preserves power");
+    beep.write_state(false);
+    ASSERT_EQ(tx_last(dev, "V3 beep off").data[11], power ? 0x03 : 0x02,
+              "V3 disabling beep sends a silent command");
+    ASSERT(!beep.state, "V3 beep switch publishes OFF");
+    dev.sendSetStatus();
+    ASSERT_EQ(tx_last(dev, "V3 subsequent command").data[11], power ? 0x03 : 0x02,
+              "V3 subsequent commands remain silent");
+  }
 }
 
 static void test_v3_timer_and_filter() {
@@ -752,6 +784,7 @@ static void test_v3_status_flags_not_copied_to_control() {
   dev.set_protocol_version(3);
   dev.set_handshake_enabled(false);
   dev.setup();
+  dev.set_beep_state(true);  // Factory captures have command beeps enabled.
   dev.inject(MAD50P1AWS_STATUS_LOW_TARGET_75_FLAGS_18,
              sizeof(MAD50P1AWS_STATUS_LOW_TARGET_75_FLAGS_18));
 
@@ -778,6 +811,7 @@ static void test_v3_factory_pump() {
   dev.set_protocol_version(3);
   dev.set_handshake_enabled(false);
   dev.setup();
+  dev.set_beep_state(true);
   dev.inject(MAD50P1AWS_FACTORY_PUMP_OFF_RESPONSE,
              sizeof(MAD50P1AWS_FACTORY_PUMP_OFF_RESPONSE));
 
@@ -865,6 +899,7 @@ int main() {
 #ifdef USE_MIDEA_DEHUM_PUMP
   total += run_test("2.29  V3 factory pump", test_v3_factory_pump);
   total += run_test("V3 timer and filter", test_v3_timer_and_filter);
+  total += run_test("V3 beep switch", test_v3_beep_switch);
 #endif
 
   if (total == 0) {
