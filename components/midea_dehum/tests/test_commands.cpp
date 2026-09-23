@@ -695,6 +695,58 @@ static void test_v3_smart_low_target_60_regression() {
             "V3 preserved state: status flags are not copied");
 }
 
+static void test_v3_timer_and_filter() {
+  TestMideaDehum dev;
+  dev.set_protocol_version(3);
+  dev.set_handshake_enabled(false);
+  dev.setup();
+  dev.inject(MAD50P1AWS_FACTORY_PUMP_OFF_RESPONSE,
+             sizeof(MAD50P1AWS_FACTORY_PUMP_OFF_RESPONSE));
+  for (bool power : {false, true}) {
+    dev.cmd_power(power);
+    for (float hours : {0.5f, 1.0f, 1.5f, 2.0f, 24.0f}) {
+      dev.set_timer_hours(hours, false);
+      const auto frame = tx_last(dev, "V3 timer write");
+      const uint8_t encoded = 0x80 | (static_cast<int>(hours) << 2) |
+                              (hours != static_cast<int>(hours) ? 2 : 0);
+      ASSERT_EQ(frame.data[power ? 15 : 14], encoded, "V3 active timer encoding");
+      ASSERT_EQ(frame.data[power ? 14 : 15], 0x7F, "V3 opposite timer disabled");
+      ASSERT_EQ(frame.data[16], 0x0F, "V3 timer extension");
+      ASSERT(!dev.get_timer_write_pending(), "V3 timer request consumed");
+      dev.cmd_humidity(65);
+      ASSERT_EQ(tx_last(dev, "V3 timer preserved").data[power ? 15 : 14], encoded,
+                "V3 humidity change preserves timer");
+      uint8_t status[sizeof(MAD50P1AWS_FACTORY_PUMP_OFF_RESPONSE)];
+      memcpy(status, MAD50P1AWS_FACTORY_PUMP_OFF_RESPONSE, sizeof(status));
+      status[11] = power;
+      status[14] = frame.data[14];
+      status[15] = frame.data[15];
+      status[16] = frame.data[16];
+      dev.parseState(status, sizeof(status));
+      ASSERT(fabs(dev.raw_timer_hours() - hours) < 0.01f, "V3 timer status round trip");
+    }
+    dev.set_timer_hours(0, false);
+    const auto cancelled = tx_last(dev, "V3 timer cancel");
+    ASSERT_EQ(cancelled.data[14], 0x7F, "V3 cancel ON timer");
+    ASSERT_EQ(cancelled.data[15], 0x7F, "V3 cancel OFF timer");
+    ASSERT_EQ(cancelled.data[16], 0, "V3 cancel extension");
+  }
+  struct TestFilterButton : esphome::midea_dehum::MideaFilterCleanedButton {
+    using MideaFilterCleanedButton::press_action;
+  } button;
+  dev.set_filter_cleaned_button(&button);
+  button.press_action();
+  ASSERT_EQ(tx_last(dev, "V3 filter reset").data[19], 0x80,
+            "V3 filter reset without active reminder");
+  dev.sendSetStatus();
+  ASSERT_EQ(tx_last(dev, "V3 after reset").data[19], 0,
+            "V3 filter reset is one-shot");
+  dev.mark_v3_pump_command(true);
+  button.press_action();
+  ASSERT_EQ(tx_last(dev, "V3 filter and pump").data[19], 0x98,
+            "V3 filter reset preserves explicit pump request");
+}
+
 static void test_v3_status_flags_not_copied_to_control() {
   TestMideaDehum dev;
   dev.set_protocol_version(3);
@@ -812,6 +864,7 @@ int main() {
   total += run_test("2.30  V3 uninitialized fan fallback", test_v3_uninitialized_fan_fallback);
 #ifdef USE_MIDEA_DEHUM_PUMP
   total += run_test("2.29  V3 factory pump", test_v3_factory_pump);
+  total += run_test("V3 timer and filter", test_v3_timer_and_filter);
 #endif
 
   if (total == 0) {

@@ -110,6 +110,24 @@ static void v3_send_set_status(MideaDehumComponent* self) {
     cmd[3] = 0xA8;
   }
 #ifdef USE_MIDEA_DEHUM_TIMER
+  // Use the V2 quarter-hour layout; V3 timer writes need device verification.
+  if (self->get_timer_write_pending()) {
+    const float hours = self->get_pending_timer_hours();
+    uint8_t on_raw = 0x7F, off_raw = 0x7F, ext_raw = 0x00;
+    if (hours > 0.01f) {
+      const uint16_t minutes = static_cast<uint16_t>(hours * 60.0f + 0.5f);
+      const uint8_t encoded = 0x80 | ((minutes / 60) << 2) | ((minutes % 60) / 15);
+      if (self->get_pending_applies_to_on())
+        on_raw = encoded;
+      else
+        off_raw = encoded;
+      ext_raw = 0x0F;
+    }
+    self->set_last_on_raw(on_raw);
+    self->set_last_off_raw(off_raw);
+    self->set_last_ext_raw(ext_raw);
+    self->clear_timer_write_pending();
+  }
   cmd[4] = self->get_last_on_raw();
   cmd[5] = self->get_last_off_raw();
   cmd[6] = self->get_last_ext_raw();
@@ -128,6 +146,10 @@ static void v3_send_set_status(MideaDehumComponent* self) {
 #ifdef USE_MIDEA_DEHUM_PUMP
   if (self->v3_pump_command_pending())
     command_flags = self->v3_pump_command_on() ? 0x18 : 0x10;
+#endif
+#ifdef USE_MIDEA_DEHUM_FILTER_BUTTON
+  // Filter acknowledgement follows V2; not yet captured on V3 hardware.
+  if (self->pop_filter_cleaned_flag()) command_flags |= 0x80;
 #endif
   cmd[9] = command_flags;
   ESP_LOGD(TAG, "V3 command flags: status=%02X command=%02X pump=%s",

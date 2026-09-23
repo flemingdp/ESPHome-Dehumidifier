@@ -187,9 +187,9 @@ SS CC CK
 | 11           | 1           | `43` ON, `42` OFF (factory beep bit retained)                            |
 | 12           | 2           | `01` Normal, `02` Continuous, `03` Smart; other modes reject the command |
 | 13           | 3           | Status `28` → request `A8` Low; status `50` → request `D0` High          |
-| 14–16        | 4–6         | Last received raw timer bytes, or `7F 7F 00` without timer support       |
+| 14–16        | 4–6         | Preserved timer bytes, or pending timer write; see below                |
 | 17           | 7           | Direct target percentage, e.g. `37` = 55%, `3C` = 60%                    |
-| 19           | 9           | Explicit pump request: `18` ON, `10` OFF; otherwise `00`                 |
+| 19           | 9           | Explicit pump request: `18` ON, `10` OFF; filter reset adds `80`         |
 | 18, 20–30    | 8, 10–20    | Zero                                                                     |
 | 31           | —           | Sequence                                                                 |
 | 32–33        | —           | CRC8, checksum                                                           |
@@ -198,8 +198,26 @@ Controls preserve power, mode, fan, and target humidity unless changed by the
 caller. Unsupported modes block the command. An unknown fan value uses Low
 (`A8`) without changing the stored state; this is a startup fallback.
 
-With timer support, commands copy the last raw timer bytes (initially
-`00 00 00`). Without it, they use `7F 7F 00`. New timer settings are not encoded.
+With timer support, commands preserve the last raw timer bytes (initially
+`00 00 00`) unless a timer write is pending. Without it, they use `7F 7F 00`.
+
+### Timer and Filter Reset (Hardware Verification Pending)
+
+V3 timer writes and filter reset currently use the V2 field meanings. These
+are inferred, not confirmed by V3 factory command captures or a device test.
+
+The existing timer number accepts 0 to 24 hours in half-hour steps. Positive
+values schedule power ON when the appliance is off, or power OFF when it is
+on. Setting zero cancels both timers. Active timer bytes use bit 7 for enable,
+bits 6-2 for hours, and bits 1-0 for quarter-hours: `82` = 0.5h, `84` = 1h,
+`86` = 1.5h, `88` = 2h, `E0` = 24h. The opposite timer is `7F`; the extension
+byte is `0F`. Cancellation sends `7F 7F 00`, matching the captured inactive
+V3 timer state. V3 status decoding uses this same quarter-hour layout.
+
+The filter-cleaned button sends bit 7 (`80`) in frame byte 19 once. It works
+without a configured filter reminder sensor or an active reminder. The next
+normal command does not repeat the reset bit. Explicit pump flags can be
+combined with this acknowledgement.
 
 Do not copy status flags wholesale into commands. Factory pump commands use
 `18` for ON and `10` for OFF; non-pump commands retain `00`. Byte 25 has appeared as

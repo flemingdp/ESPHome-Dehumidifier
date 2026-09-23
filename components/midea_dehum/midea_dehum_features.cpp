@@ -77,6 +77,13 @@ void MideaDehumComponent::set_filter_cleaned_button(MideaFilterCleanedButton* b)
 }
 
 void MideaFilterCleanedButton::press_action() {
+  if (this->parent_ == nullptr) return;
+  // Allow an explicit V3 reset even without a configured reminder sensor.
+  if (this->parent_->is_v3_active()) {
+    this->parent_->set_filter_cleaned_flag(true);
+    this->parent_->sendSetStatus();
+    return;
+  }
 #ifdef USE_MIDEA_DEHUM_FILTER
   if (this->parent_ == nullptr) return;
 

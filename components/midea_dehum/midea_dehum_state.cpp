@@ -129,14 +129,14 @@ void MideaDehumComponent::parseState(const uint8_t* buf, size_t len) {
   uint8_t on_hr = 0, off_hr = 0;
   int on_min = 0, off_min = 0;
 
-  // V2 timer encoding: hours in bits 6-2, quarter-hours (0-3) in bits 1-0.
+  // V2/V3 timer encoding: hours in bits 6-2, quarter-hours (0-3) in bits 1-0.
   // V1 timer encoding: hours in bits 6-2, quarter index in bits 1-0, with a
   // fine-offset subtraction from ext_raw (see protocol_v1 docs).
-  const bool is_v2 = (this->protocol_ && this->protocol_->version == 2);
+  const bool quarter_hour_timer = this->is_v2_active() || this->is_v3_active();
 
   if (on_timer_set) {
     on_hr  = (on_raw & 0x7C) >> 2;
-    if (is_v2) {
+    if (quarter_hour_timer) {
       on_min = (on_raw & 0x03) * 15;
     } else {
       on_min = ((on_raw & 0x03) + 1) * 15 - ((ext_raw & 0xF0) >> 4);
@@ -146,7 +146,7 @@ void MideaDehumComponent::parseState(const uint8_t* buf, size_t len) {
 
   if (off_timer_set) {
     off_hr  = (off_raw & 0x7C) >> 2;
-    if (is_v2) {
+    if (quarter_hour_timer) {
       off_min = (off_raw & 0x03) * 15;
     } else {
       off_min = ((off_raw & 0x03) + 1) * 15 - (ext_raw & 0x0F);
